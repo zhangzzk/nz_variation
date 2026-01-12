@@ -8,9 +8,10 @@ BLENDING_EMULATOR_DIR = '/home/z/Zekang.Zhang/blending_emulator'
 # --- 1. Global Simulation Settings ---
 SIM_SETTINGS = {
     'sys_nside': 64,
-    'n_pop_sample': 5_000_000,
+    'n_pop_sample': 100_000,
     'chunk_size': 50_000_000,
     'n_jobs': -1,  # Parallel processing threads
+    'detection_threshold': 0.2,
 }
 
 # --- 2. Paths & Directories ---
@@ -39,20 +40,21 @@ OBS_CONDITIONS = {
 # --- 4. Photo-z Model (from math/clustering_enhance.md) ---
 PHOTOZ_PARAMS = {
     'b0': 0.0, 'b1': 0.0, 'bm': 0.0, 'bc': 0.0,
-    'sigma0': 0.1, 'alpha': 0.2, 
+    'sigma0': 0.1, 'alpha': 0.5, 
     'm_ref': 24.0, 
     'pixel_rms_ref': 6.0  # Reference noise level
 }
 
 # --- 5. Redshift Binning & Analysis ---
 ANALYSIS_SETTINGS = {
-    'z_max': 3.,
     'z_bins': 60,
-    'tomo_bin_edges': [0.0, 0.3, 0.6, 0.9, 1.3, 1.8, 2.5],
-    'smoothing_sigma_dz': 0.05,
-    'smooth_nz': False,
-    'preserve_l2': False,
-    'load_preds': True,
+    'z_min': None,
+    'z_max': None,
+    'tomo_bin_edges': [0.2, 0.4, 0.55, 0.7, 0.85, 0.95, 1.05],
+    'smoothing_sigma_dz': 0.1,
+    'smooth_nz': True,
+    'load_preds': False,
+    'post_det_snr_thresh': None,
 }
 
 # --- 6. Cosmology ---

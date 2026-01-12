@@ -192,7 +192,7 @@ def main():
             theta_deg=theta_deg,
             seen_idx=stats['SEEN_idx'],
             nside=config.SIM_SETTINGS['sys_nside'],
-            n_samples=config.SIM_SETTINGS['n_pop_sample']
+            weights=stats['frac_pix']
         )
         
         all_clustering_results[key] = res

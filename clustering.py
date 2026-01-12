@@ -94,50 +94,53 @@ class ClusteringEnhancement:
 
     def selection_wtheta_from_map(
         self,
-        n_map: np.ndarray,
+        n_maps: np.ndarray,
+        nbar: np.ndarray,
         theta_deg: np.ndarray,
-        nside: Optional[int] = None,
-        seen_idx: Optional[np.ndarray] = None,
-        n_samples: Optional[float] = None,
-        dz: Optional[float] = None,
+        nside: int,
+        seen_idx: np.ndarray,
     ) -> np.ndarray:
-        n_map = np.asarray(n_map, dtype=float)
-        theta_deg = np.asarray(theta_deg, dtype=float)
-
-        if seen_idx is not None:
-            if nside is None:
-                raise ValueError("nside must be provided if seen_idx is used.")
-            full_map = np.zeros(hp.nside2npix(nside))
-            mean_val = np.mean(n_map)
-            full_map[seen_idx] = n_map - mean_val
-            delta = full_map
-        else:
-            delta = n_map - np.mean(n_map)
-            if nside is None:
-                nside = hp.npix2nside(delta.size)
-        
+        """
+        Compute the selection correlation matrix delta_w_nz[i,j] following:
+        delta_w_nz[i,j] = term1 + term2 + term3
+        where term1, term2 are mean shifts and term3 is the angular correlation of fluctuations.
+        """
+        n_maps = np.asarray(n_maps, dtype=float)
+        nbar = np.asarray(nbar, dtype=float)
+        nz = n_maps.shape[0]
+        npix = hp.nside2npix(nside)
+        theta_rad = np.deg2rad(theta_deg)
         lmax_map = 3 * nside - 1
         lmax = min(self.ell_max, lmax_map)
-        cl = hp.anafast(delta, lmax=lmax)
-        
-        if seen_idx is not None:
-            fsky = len(seen_idx) / len(full_map)
-            if fsky > 0:
-                cl /= fsky
-        
-        # Shot Noise Subtraction
-        if n_samples is not None and dz is not None:
-            # Theoretical Poisson noise floor in C_ell: sigma^2 * Omega_pix
-            # sigma^2 = nbar / (n_samples * dz)
-            omega_pix = 4.0 * np.pi / len(full_map)
-            cl_shot = (mean_val / (n_samples * dz)) * omega_pix
-            cl = np.maximum(cl - cl_shot, 0.0)
+        fsky = len(seen_idx) / npix if npix > 0 else 0
 
-        if self.ell_min > 0:
-            cl[: min(self.ell_min, lmax + 1)] = 0.0
+        delta_w_nz = np.zeros((nz, nz, len(theta_rad)))
+        # Mean over pixels for each bin
+        local_means = np.mean(n_maps, axis=1)
 
-        theta_rad = np.deg2rad(theta_deg)
-        return self._cl_to_wtheta_fullsky(cl, theta_rad, min(self.ell_min, lmax))
+        # Precompute alms for term3 efficiency
+        alms = []
+        for i in range(nz):
+            full_delta_map_i = np.zeros(npix)
+            full_delta_map_i[seen_idx] = n_maps[i] - nbar[i]
+            alms.append(hp.map2alm(full_delta_map_i, lmax=lmax))
+
+        for i in range(nz):
+            for j in range(i, nz):
+                term1 = nbar[i] * (local_means[i] - nbar[i])
+                term2 = nbar[j] * (local_means[j] - nbar[j])
+
+                cl_ij = hp.alm2cl(alms[i], alms[j])
+                if fsky > 0:
+                    cl_ij /= fsky
+
+                term3 = self._cl_to_wtheta_fullsky(cl_ij, theta_rad, min(self.ell_min, lmax))
+                val = term1 + term2 + term3
+                delta_w_nz[i, j] = val
+                if i != j:
+                    delta_w_nz[j, i] = val
+        
+        return delta_w_nz
 
     def _get_bin_tracer(self, z_support, z_lo, z_hi, dz, bias=None):
         W = np.zeros_like(z_support)
@@ -231,7 +234,7 @@ class ClusteringEnhancement:
         selection_mode: str = "wtheta",
         nside: Optional[int] = None,
         seen_idx: Optional[np.ndarray] = None,
-        n_samples: Optional[float] = None,
+        weights: Optional[np.ndarray] = None,
     ) -> EnhancementResult:
         n_maps = np.asarray(n_maps, dtype=float)
         nbar = np.asarray(nbar, dtype=float)
@@ -250,7 +253,10 @@ class ClusteringEnhancement:
             else:
                 raise ValueError("nside must be provided if seen_idx is used.")
 
-        var_n = np.mean((n_maps - nbar[:, None]) ** 2, axis=1)
+        if weights is not None:
+            var_n = np.average((n_maps - nbar[:, None]) ** 2, weights=weights, axis=1)
+        else:
+            var_n = np.mean((n_maps - nbar[:, None]) ** 2, axis=1)
         
         # Calculate matter correlation matrix at full resolution (not capped by nside)
         w_mat, z_mid, dz = self.matter_correlation_matrix(
@@ -266,17 +272,18 @@ class ClusteringEnhancement:
 
         w_selection: Optional[np.ndarray]
         if selection_mode == "wtheta":
-            print(f"Computing {nz} angular variations (anafast + shot-noise sub)...")
-            w_selection_density = np.zeros((nz, len(theta_deg)), dtype=float)
-            for i in range(nz):
-                w_selection_density[i, :] = self.selection_wtheta_from_map(
-                    n_maps[i], theta_deg, nside=nside, seen_idx=seen_idx,
-                    n_samples=n_samples, dz=dz[i]
-                )
-            w_selection = w_selection_density * (dz[:, None] ** 2)
+            print(f"Computing {nz}x{nz} angular expansion terms (anafast matrix)...")
+            # delta_w_matrix has shape (nz, nz, ntheta)
+            delta_w_matrix = self.selection_wtheta_from_map(
+                n_maps, nbar, theta_deg, nside=nside, seen_idx=seen_idx
+            )
             
-            xi_diagonal = np.diagonal(w_mat, axis1=0, axis2=1).T  # (nz, ntheta)
-            delta_w = np.sum(w_selection * xi_diagonal, axis=0)
+            # Apply integration weights dz_i * dz_j
+            dz_matrix = dz[:, None] * dz[None, :]
+            w_selection = delta_w_matrix * dz_matrix[:, :, None]
+            
+            # delta_w(theta) = Sum_{i,j} w_selection[i,j,theta] * w_mat[i,j,theta]
+            delta_w = np.einsum("ijk,ijk->k", w_selection, w_mat)
         else:
             xi_diagonal = np.diagonal(w_mat, axis1=0, axis2=1).T
             delta_w = np.sum(var_n[:, None] * (dz[:, None] ** 2) * xi_diagonal, axis=0)

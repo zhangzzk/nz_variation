@@ -195,6 +195,30 @@ def plot_systematics_consolidated(maps, labels, nside, mask, output_path):
     plt.savefig(output_path, dpi=150)
     plt.close()
 
+def plot_systematics_histograms(maps, labels, mask, output_path):
+    """Plot histograms of multiple maps in a single row."""
+    n_maps = len(maps)
+    fig, axes = plt.subplots(1, n_maps, figsize=(5 * n_maps, 4))
+    if n_maps == 1:
+        axes = [axes]
+
+    colors = ['royalblue', 'coral', 'mediumseagreen']
+    
+    for i, (map_data, label) in enumerate(zip(maps, labels)):
+        data = map_data[mask]
+        data = data[~np.isnan(data)] # Remove NaNs if any
+        
+        axes[i].hist(data, bins=50, color=colors[i % len(colors)], alpha=0.7, edgecolor='black', density=True)
+        axes[i].set_title(label)
+        axes[i].set_xlabel("Value")
+        axes[i].set_ylabel("Density")
+        axes[i].grid(True, linestyle='--', alpha=0.6)
+
+    plt.tight_layout()
+    print(f"Saving systematics histograms to {output_path}")
+    plt.savefig(output_path, dpi=150)
+    plt.close()
+
 def main():
     # Ensure output directories exist
     os.makedirs(os.path.join(config.BASE_DIR, "data"), exist_ok=True)
@@ -241,6 +265,14 @@ def main():
         ["PSF FWHM", "Pixel RMS", "Extinction Ar"],
         nside, mask_footprint, 
         os.path.join("output", "sys_maps.png")
+    )
+
+    # Histogram Plotting
+    plot_systematics_histograms(
+        [pix_sys_psf, pix_sys_noise, pix_sys_galactic],
+        ["PSF FWHM", "Pixel RMS", "Extinction Ar"],
+        mask_footprint,
+        os.path.join("output", "sys_hists.png")
     )
 
 if __name__ == "__main__":
